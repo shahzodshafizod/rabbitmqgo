@@ -11,8 +11,8 @@ import (
 )
 
 type Service interface {
-	Publish(exchange string, mandatory, immediate bool, msg amqp.Publishing) error
-	Consume(consumer string, autoAck, exclusive, noLocal, noWait bool, args amqp.Table) (<-chan amqp.Delivery, error)
+	Publish(key string, body []byte) error
+	Subscribe(queueName string, key string) (<-chan amqp.Delivery, error)
 }
 
 type service struct {
@@ -32,9 +32,9 @@ func New(lifecycle fx.Lifecycle, pms *rabbitmq.Params) (Service, error) {
 	return &service{connection: connection}, nil
 }
 
-func (s *service) Publish(exchange string, mandatory, immediate bool, msg amqp.Publishing) error {
-	return s.connection.Publish(exchange, mandatory, immediate, msg)
+func (s *service) Publish(key string, body []byte) error {
+	return s.connection.Publish(key, body)
 }
-func (s *service) Consume(consumer string, autoAck, exclusive, noLocal, noWait bool, args amqp.Table) (<-chan amqp.Delivery, error) {
-	return s.connection.Consume(consumer, autoAck, exclusive, noLocal, noWait, args)
+func (s *service) Subscribe(queueName string, key string) (<-chan amqp.Delivery, error) {
+	return s.connection.Subscribe(queueName, key)
 }

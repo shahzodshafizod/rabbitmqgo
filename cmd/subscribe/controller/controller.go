@@ -10,14 +10,7 @@ import (
 )
 
 func Start(rabbit rabbitmq.Service) {
-	msgs, err := rabbit.Consume(
-		"",    // consumer
-		true,  // auto-ack
-		false, // exclusive
-		false, // no-local
-		false, // no-wait
-		nil,   // args
-	)
+	msgs, err := rabbit.Subscribe("golang-queue", "merchants")
 	if err != nil {
 		panic("Failed to register a consumer: " + err.Error())
 	}

@@ -9,10 +9,9 @@ import (
 	"time"
 
 	"github.com/shafizod/rabbitmqgo/internal/rabbitmq"
+	"github.com/tidwall/gjson"
 
 	"github.com/julienschmidt/httprouter"
-	"github.com/streadway/amqp"
-	"github.com/tidwall/gjson"
 	"go.uber.org/fx"
 )
 
@@ -25,21 +24,17 @@ func Start(lifecycle fx.Lifecycle, rabbit rabbitmq.Service) {
 			return
 		}
 		defer r.Body.Close()
-		body := gjson.GetBytes(data, "body").String()
-		if err := rabbit.Publish(
-			"",    // exchange
-			false, // mandatory
-			false, // immediate
-			amqp.Publishing{
-				ContentType: "text/plain",
-				Body:        []byte(body),
-			}); err != nil {
+		if !gjson.ValidBytes(data) {
+			http.Error(w, "Invalid json: "+string(data), http.StatusBadRequest)
+			return
+		}
+		if err := rabbit.Publish("merchants", data); err != nil {
 			http.Error(w, "Failed to publish a message: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(fmt.Sprintf("Congrats with sending message: %s", body)))
+		w.Write([]byte(fmt.Sprintf("Congrats with sending message: %s", []byte(data))))
 	})
 
 	srv := &http.Server{

@@ -6,5 +6,7 @@ func Init() (*rabbitmq.Params, error) {
 	return &rabbitmq.Params{
 		Url:       "amqp://guest:guest@rabbitmqgo:5672/",
 		QueueName: "golang-queue",
+		Exchange:  "exchange",
+		Consumer:  "",
 	}, nil
 }
