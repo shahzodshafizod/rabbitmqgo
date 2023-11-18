@@ -1,43 +1,48 @@
 package rabbitmq
 
 import (
-	"errors"
-	"fmt"
+	"context"
 
-	"github.com/streadway/amqp"
+	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/spf13/viper"
+	"go.uber.org/fx"
 )
 
-type connection struct {
-	conn     *amqp.Connection
-	channel  *amqp.Channel
-	exchange string
-	consumer string
+type Publisher interface {
+	Publish(ctx context.Context, key string, body []byte) error
 }
 
-type Connection interface {
-	Close() error
-	Publish(key string, body []byte) error
-	Subscribe(queueName string, key string) (<-chan amqp.Delivery, error)
+type Subscriber interface {
+	Subscribe(ctx context.Context, key string) (<-chan amqp.Delivery, error)
 }
 
-type Params struct {
-	Url       string
-	QueueName string
-	Exchange  string
-	Consumer  string
+type client struct {
+	connection *amqp.Connection
+	channel    *amqp.Channel
+	queueName  string
+	exchange   string
+	consumer   string
 }
 
-func New(pms *Params) (Connection, error) {
-	conn, err := amqp.Dial(pms.Url)
-	if err != nil {
-		return nil, errors.New("Failed to connect to RabbitMQ: " + err.Error())
+func New(lifecycle fx.Lifecycle) (Publisher, Subscriber, error) {
+
+	var client = &client{
+		queueName: viper.GetString("rabbitmq.queueName"),
+		exchange:  viper.GetString("rabbitmq.exchange"),
+		consumer:  viper.GetString("rabbitmq.consumer"),
 	}
-	channel, err := conn.Channel()
-	if err != nil {
-		return nil, errors.New("Failed to open a channel: " + err.Error())
+
+	var err error
+	if client.connection, err = amqp.Dial(viper.GetString("rabbitmq.url")); err != nil {
+		return nil, nil, err
 	}
-	if err := channel.ExchangeDeclare(
-		pms.Exchange,       // name
+
+	if client.channel, err = client.connection.Channel(); err != nil {
+		return nil, nil, err
+	}
+
+	if err = client.channel.ExchangeDeclare(
+		client.exchange,    // name
 		amqp.ExchangeTopic, // type
 		true,               // durable
 		false,              // auto-deleted
@@ -45,50 +50,59 @@ func New(pms *Params) (Connection, error) {
 		false,              // no-wait
 		nil,                // arguments
 	); err != nil {
-		return nil, errors.New("Failed to declare an exchange: " + err.Error())
+		return nil, nil, err
 	}
-	return &connection{
-		conn:     conn,
-		channel:  channel,
-		exchange: pms.Exchange,
-		consumer: pms.Consumer,
-	}, nil
+
+	lifecycle.Append(fx.Hook{
+		OnStop: func(ctx context.Context) error {
+			client.channel.Cancel(client.consumer, false)
+			client.channel.Close()
+			client.connection.Close()
+			return nil
+		},
+	})
+
+	return Publisher(client), Subscriber(client), nil
 }
 
-func (c *connection) Close() error {
-	if err := c.channel.Cancel(c.consumer, false); err != nil {
-		return errors.New("c.channel.Cancel ERROR: " + err.Error())
-	}
-	if err := c.channel.Close(); err != nil {
-		return errors.New("c.channel.Close ERROR: " + err.Error())
-	}
-	if err := c.conn.Close(); err != nil {
-		return errors.New("c.conn.Close ERROR: " + err.Error())
-	}
-	return nil
-}
-
-func (c *connection) Publish(key string, body []byte) error {
-	return c.channel.Publish(c.exchange, key, false, false, amqp.Publishing{
+func (c *client) Publish(ctx context.Context, key string, body []byte) error {
+	return c.channel.PublishWithContext(ctx, c.exchange, key, false, false, amqp.Publishing{
 		ContentType: "text/json",
 		Body:        body,
 	})
 }
 
-func (c *connection) Subscribe(queueName string, key string) (<-chan amqp.Delivery, error) {
+func (c *client) Subscribe(ctx context.Context, key string) (<-chan amqp.Delivery, error) {
 	queue, err := c.channel.QueueDeclare(
-		queueName, // name
-		true,      // durable
-		false,     // delete when unused
-		false,     // exclusive
-		false,     // no-wait
-		nil,       // arguments
+		c.queueName, // name
+		true,        // durable
+		false,       // delete when unused
+		false,       // exclusive
+		false,       // no-wait
+		nil,         // arguments
 	)
 	if err != nil {
-		return nil, errors.New("Failed to declare a queue: " + err.Error())
+		return nil, nil
 	}
-	if err = c.channel.QueueBind(queue.Name, key, c.exchange, false, nil); err != nil {
-		return nil, fmt.Errorf("bind queue %s: %w", queue.Name, err)
+
+	if err = c.channel.QueueBind(
+		queue.Name,
+		key,
+		c.exchange,
+		false,
+		nil,
+	); err != nil {
+		return nil, nil
 	}
-	return c.channel.Consume(queueName, c.consumer, true, false, false, false, nil)
+
+	return c.channel.ConsumeWithContext(
+		ctx,
+		c.queueName,
+		c.consumer,
+		true,
+		false,
+		false,
+		false,
+		nil,
+	)
 }

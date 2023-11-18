@@ -1,0 +1,5 @@
+rabbitmq:
+  url: "amqp://user:password@localhost:5672/"
+  queueName: "golang-queue"
+  exchange:  "exchange"
+  consumer:  ""
